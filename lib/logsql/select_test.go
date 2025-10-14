@@ -177,6 +177,16 @@ func TestToLogsQLSuccess(t *testing.T) {
 			expected: "* | stats count()",
 		},
 		{
+			name:     "count numeric literal",
+			sql:      "SELECT COUNT(1) FROM logs",
+			expected: "* | format 1 as __const_1 | stats count(__const_1)",
+		},
+		{
+			name:     "sum numeric literal",
+			sql:      "SELECT SUM(1) FROM logs",
+			expected: "* | format 1 as __const_1 | stats sum(__const_1)",
+		},
+		{
 			name:     "trim function",
 			sql:      "SELECT TRIM(message) AS trimmed FROM logs",
 			expected: "* | extract_regexp '(?s)^\\s*(?P<trimmed>.*?\\S)?\\s*$' from message | fields trimmed",
@@ -307,6 +317,16 @@ func TestToLogsQLSuccess(t *testing.T) {
 			expected: "* | sort by (_time) | running_stats count() as running_count | fields running_count",
 		},
 		{
+			name:     "window count numeric literal",
+			sql:      "SELECT COUNT(1) OVER (ORDER BY _time) AS running_count FROM logs",
+			expected: "* | sort by (_time) | format 1 as __const_1 | running_stats count(__const_1) as running_count | fields running_count",
+		},
+		{
+			name:     "window sum numeric literal",
+			sql:      "SELECT SUM(1) OVER (ORDER BY _time) AS running_total FROM logs",
+			expected: "* | sort by (_time) | format 1 as __const_1 | running_stats sum(__const_1) as running_total | fields running_total",
+		},
+		{
 			name:     "ceil function",
 			sql:      "SELECT CEIL(duration_ms / 1000.0) AS duration FROM logs",
 			expected: "* | math ceil((duration_ms / 1000.0)) as duration | fields duration",
@@ -342,6 +362,16 @@ SELECT * FROM logs WHERE level = 'warn'`,
 			name:     "group by with having",
 			sql:      "SELECT level, COUNT(*) AS total FROM logs GROUP BY level HAVING COUNT(*) > 10",
 			expected: "* | stats by (level) count() total | filter total:>10",
+		},
+		{
+			name:     "group by count numeric literal",
+			sql:      "SELECT service, COUNT(1) AS total FROM logs GROUP BY service",
+			expected: "* | format 1 as __const_1 | stats by (service) count(__const_1) total",
+		},
+		{
+			name:     "group by sum numeric literal",
+			sql:      "SELECT service, SUM(1) AS total FROM logs GROUP BY service",
+			expected: "* | format 1 as __const_1 | stats by (service) sum(__const_1) total",
 		},
 		{
 			name: "with simple cte",
