@@ -374,6 +374,12 @@ SELECT * FROM logs WHERE level = 'warn'`,
 			expected: "* | format 1 as __const_1 | stats by (service) sum(__const_1) total",
 		},
 		{
+			name: "having aggregate constant",
+			sql:  "SELECT SUM(1) AS \"cnt_slack_079B451E84304DF1AAA4188E26F02806_ok\" FROM logs HAVING COUNT(1) > 0",
+			expected: "* | format 1 as __const_1 | stats sum(__const_1) cnt_slack_079B451E84304DF1AAA4188E26F02806_ok, count(__const_1) | " +
+				"filter \"count(__const_1)\":>0 | delete \"count(__const_1)\"",
+		},
+		{
 			name: "with simple cte",
 			sql: `WITH recent_errors AS (
     SELECT * FROM logs WHERE level = 'error'

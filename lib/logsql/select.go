@@ -5,6 +5,7 @@ import (
 	"maps"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -66,6 +67,8 @@ type selectTranslatorVisitor struct {
 	filterDeleteSet    map[string]struct{}
 	constantFields     map[string]string
 	constantFieldCount int
+	aggTempDeletes     map[string]string
+	aggPreserve        map[string]struct{}
 }
 
 type tableBinding struct {
@@ -189,6 +192,8 @@ func (v *selectTranslatorVisitor) translateSimpleSelect(stmt *ast.SelectStatemen
 	v.filterDeleteSet = nil
 	v.constantFields = nil
 	v.constantFieldCount = 0
+	v.aggTempDeletes = nil
+	v.aggPreserve = nil
 
 	joinPipes, err := v.processFrom(stmt.From)
 	if err != nil {
@@ -250,7 +255,7 @@ func (v *selectTranslatorVisitor) translateSimpleSelect(stmt *ast.SelectStatemen
 	}
 	pipes = append(pipes, joinPipes...)
 
-	statsPipes, aggregated, err := v.buildStatsPipe(stmt)
+	statsPipes, aggregated, err := v.buildStatsPipe(stmt, stmt.Having)
 	if err != nil {
 		return "", err
 	}
@@ -270,6 +275,41 @@ func (v *selectTranslatorVisitor) translateSimpleSelect(stmt *ast.SelectStatemen
 			return "", err
 		}
 		pipes = append(pipes, "filter "+havingStr)
+		if len(v.aggTempDeletes) > 0 {
+			if len(stmt.OrderBy) > 0 {
+				for _, item := range stmt.OrderBy {
+					fn, ok := item.Expr.(*ast.FuncCall)
+					if !ok {
+						continue
+					}
+					if !isAggregateFunction(fn) {
+						continue
+					}
+					key, err := v.aggregateKeyFromFunc(fn)
+					if err != nil {
+						return "", err
+					}
+					v.preserveAggregate(key)
+				}
+			}
+			keys := make([]string, 0, len(v.aggTempDeletes))
+			for key := range v.aggTempDeletes {
+				if v.aggPreserve != nil {
+					if _, ok := v.aggPreserve[key]; ok {
+						continue
+					}
+				}
+				keys = append(keys, key)
+			}
+			if len(keys) > 0 {
+				sort.Strings(keys)
+				deleteVals := make([]string, 0, len(keys))
+				for _, key := range keys {
+					deleteVals = append(deleteVals, v.aggTempDeletes[key])
+				}
+				pipes = append(pipes, "delete "+strings.Join(deleteVals, ", "))
+			}
+		}
 	}
 
 	projectionPipes, projectionFields, err := v.buildProjectionPipes(stmt.Columns, aggregated)
@@ -970,13 +1010,35 @@ func (v *selectTranslatorVisitor) ensureAliases(expr ast.Expr, allowed map[strin
 	return nil
 }
 
-func (v *selectTranslatorVisitor) buildStatsPipe(stmt *ast.SelectStatement) ([]string, bool, error) {
+func (v *selectTranslatorVisitor) buildStatsPipe(stmt *ast.SelectStatement, having ast.Expr) ([]string, bool, error) {
 	hasGroup := len(stmt.GroupBy) > 0
 	aggregates := make([]aggItem, 0)
 	groupFields := make([]string, 0)
 	groupLookup := make(map[string]struct{})
 	preGroupPipes := make([]string, 0)
 	aliasSources := v.collectGroupAliases(stmt.Columns)
+	aggIndex := make(map[string]int)
+
+	addAggregate := func(item aggItem) {
+		if idx, exists := aggIndex[item.key]; exists {
+			if len(item.prePipes) > 0 {
+				existing := aggregates[idx]
+				existing.prePipes = append(existing.prePipes, item.prePipes...)
+				if item.selected {
+					existing.selected = true
+				}
+				aggregates[idx] = existing
+			}
+			if item.selected && !aggregates[idx].selected {
+				existing := aggregates[idx]
+				existing.selected = true
+				aggregates[idx] = existing
+			}
+			return
+		}
+		aggIndex[item.key] = len(aggregates)
+		aggregates = append(aggregates, item)
+	}
 
 	if hasGroup {
 		v.groupExprAliases = make(map[string]string)
@@ -1059,7 +1121,8 @@ func (v *selectTranslatorVisitor) buildStatsPipe(stmt *ast.SelectStatement) ([]s
 				if err != nil {
 					return nil, false, err
 				}
-				aggregates = append(aggregates, item)
+				item.selected = true
+				addAggregate(item)
 			} else if hasGroup {
 				if _, ok, err := v.lookupGroupExpr(expr); err != nil {
 					return nil, false, err
@@ -1107,6 +1170,12 @@ func (v *selectTranslatorVisitor) buildStatsPipe(stmt *ast.SelectStatement) ([]s
 		}
 	}
 
+	if having != nil {
+		if err := v.collectAggregatesFromExpr(having, addAggregate); err != nil {
+			return nil, false, err
+		}
+	}
+
 	if len(aggregates) == 0 {
 		if hasGroup {
 			return nil, false, &TranslationError{
@@ -1141,8 +1210,55 @@ func (v *selectTranslatorVisitor) buildStatsPipe(stmt *ast.SelectStatement) ([]s
 	builder.WriteString(strings.Join(funcs, ", "))
 
 	v.aggResults = aggResults
+	deleteTargets := make(map[string]string)
+	for _, agg := range aggregates {
+		if agg.selected {
+			continue
+		}
+		deleteTargets[agg.key] = formatFieldName(agg.resultName)
+	}
+	if len(deleteTargets) > 0 {
+		v.aggTempDeletes = deleteTargets
+	} else {
+		v.aggTempDeletes = nil
+	}
 	pipes := append(preGroupPipes, builder.String())
 	return pipes, true, nil
+}
+
+func (v *selectTranslatorVisitor) collectAggregatesFromExpr(expr ast.Expr, add func(aggItem)) error {
+	if expr == nil {
+		return nil
+	}
+	funcs := make([]*ast.FuncCall, 0)
+	walkExpr(expr, func(e ast.Expr) {
+		if fn, ok := e.(*ast.FuncCall); ok {
+			if isAggregateFunction(fn) {
+				funcs = append(funcs, fn)
+			}
+		}
+	})
+	for _, fn := range funcs {
+		if fn.Over != nil {
+			return &TranslationError{
+				Code:    http.StatusBadRequest,
+				Message: "translator: window functions are not supported in HAVING",
+			}
+		}
+		item, err := v.analyzeAggregate(fn, "")
+		if err != nil {
+			return err
+		}
+		add(item)
+	}
+	return nil
+}
+
+func (v *selectTranslatorVisitor) preserveAggregate(key string) {
+	if v.aggPreserve == nil {
+		v.aggPreserve = make(map[string]struct{})
+	}
+	v.aggPreserve[key] = struct{}{}
 }
 
 func (v *selectTranslatorVisitor) prepareGroupByField(expr ast.Expr, index int) (string, []string, error) {
@@ -1262,6 +1378,7 @@ type aggItem struct {
 	statsCall  string
 	resultName string
 	prePipes   []string
+	selected   bool
 }
 
 func (v *selectTranslatorVisitor) analyzeAggregate(fn *ast.FuncCall, alias string) (aggItem, error) {
@@ -2598,7 +2715,7 @@ func (v *selectTranslatorVisitor) translateExpr(expr ast.Expr) (string, error) {
 				return "", err
 			}
 			if name, ok := v.aggResults[key]; ok {
-				return name, nil
+				return formatFieldName(name), nil
 			}
 		}
 		return "", &TranslationError{
@@ -2975,7 +3092,7 @@ func (v *selectTranslatorVisitor) fieldNameFromExpr(expr ast.Expr) (string, bool
 						Message: "translator: unknown aggregate referenced",
 					}
 				}
-				return name, true, nil
+				return formatFieldName(name), true, nil
 			}
 			if groupField, ok, err := v.lookupGroupExpr(e); err != nil {
 				return "", false, err
