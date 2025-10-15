@@ -1185,11 +1185,18 @@ func (v *selectTranslatorVisitor) buildStatsPipe(stmt *ast.SelectStatement, havi
 
 	if len(aggregates) == 0 {
 		if hasGroup {
-			return nil, false, &TranslationError{
-				Code:    http.StatusBadRequest,
-				Message: "translator: GROUP BY requires aggregate expressions",
+			v.aggResults = make(map[string]string)
+			v.aggTempDeletes = nil
+			var pipe string
+			if len(groupFields) > 0 {
+				pipe = fmt.Sprintf("uniq by (%s)", strings.Join(groupFields, ", "))
+			} else {
+				pipe = "uniq"
 			}
+			pipes := append(preGroupPipes, pipe)
+			return pipes, true, nil
 		}
+		v.aggResults = nil
 		return nil, false, nil
 	}
 
@@ -2561,7 +2568,7 @@ func (v *selectTranslatorVisitor) buildProjectionPipes(columns []ast.SelectItem,
 	if len(renamePairs) > 0 {
 		pipes = append(pipes, "rename "+strings.Join(renamePairs, ", "))
 	}
-	if len(fields) > 0 && !aggregated {
+	if len(fields) > 0 && (!aggregated || len(v.aggResults) == 0) {
 		pipes = append(pipes, "fields "+strings.Join(fields, ", "))
 	}
 	return pipes, fields, nil

@@ -409,6 +409,11 @@ SELECT * FROM logs WHERE level = 'warn'`,
 			expected: "* | format 1 as __const_1 | stats by (service) sum(__const_1) total",
 		},
 		{
+			name:     "group by without aggregates",
+			sql:      "SELECT kubernetes.container_name FROM logs GROUP BY kubernetes.container_name",
+			expected: "* | uniq by (kubernetes.container_name) | fields kubernetes.container_name",
+		},
+		{
 			name: "having aggregate constant",
 			sql:  "SELECT SUM(1) AS \"cnt_slack_079B451E84304DF1AAA4188E26F02806_ok\" FROM logs HAVING COUNT(1) > 0",
 			expected: "* | format 1 as __const_1 | stats sum(__const_1) cnt_slack_079B451E84304DF1AAA4188E26F02806_ok, count(__const_1) | " +
