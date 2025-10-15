@@ -157,6 +157,11 @@ func TestToLogsQLSuccess(t *testing.T) {
 			expected: "* | format \"hello\" as literal_hello | fields literal_hello",
 		},
 		{
+			name:     "select qualified star",
+			sql:      "SELECT l.* FROM logs l",
+			expected: "*",
+		},
+		{
 			name:     "in list",
 			sql:      "SELECT * FROM logs WHERE service IN ('api', 'worker')",
 			expected: "service:(api OR worker)",
