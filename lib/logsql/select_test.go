@@ -127,6 +127,36 @@ func TestToLogsQLSuccess(t *testing.T) {
 			expected: "* | offset 3",
 		},
 		{
+			name:     "select literal without from",
+			sql:      "SELECT 1",
+			expected: "* | limit 1 | delete * | format 1",
+		},
+		{
+			name:     "select literal with alias without from",
+			sql:      "SELECT 1 AS one",
+			expected: "* | limit 1 | delete * | format 1 as one | fields one",
+		},
+		{
+			name:     "select literal with from",
+			sql:      "SELECT 1 FROM logs",
+			expected: "* | format 1 as literal_1 | fields literal_1",
+		},
+		{
+			name:     "select string literal without from",
+			sql:      "SELECT 'hello'",
+			expected: "* | limit 1 | delete * | format \"hello\"",
+		},
+		{
+			name:     "select string literal with alias without from",
+			sql:      "SELECT 'hello' AS greeting",
+			expected: "* | limit 1 | delete * | format \"hello\" as greeting | fields greeting",
+		},
+		{
+			name:     "select string literal with from",
+			sql:      "SELECT 'hello' FROM logs",
+			expected: "* | format \"hello\" as literal_hello | fields literal_hello",
+		},
+		{
 			name:     "in list",
 			sql:      "SELECT * FROM logs WHERE service IN ('api', 'worker')",
 			expected: "service:(api OR worker)",

@@ -45,6 +45,8 @@ var (
 	safeFormatFieldLiteral = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 )
 
+const constantSelectBasePipeline = "* | limit 1 | delete *"
+
 type selectTranslatorVisitor struct {
 	result string
 	err    error
@@ -69,6 +71,7 @@ type selectTranslatorVisitor struct {
 	constantFieldCount int
 	aggTempDeletes     map[string]string
 	aggPreserve        map[string]struct{}
+	constantBase       bool
 }
 
 type tableBinding struct {
@@ -194,6 +197,7 @@ func (v *selectTranslatorVisitor) translateSimpleSelect(stmt *ast.SelectStatemen
 	v.constantFieldCount = 0
 	v.aggTempDeletes = nil
 	v.aggPreserve = nil
+	v.constantBase = false
 
 	joinPipes, err := v.processFrom(stmt.From)
 	if err != nil {
@@ -433,11 +437,14 @@ func (v *selectTranslatorVisitor) buildDistinctPipe(fields []string, aggregated 
 
 func (v *selectTranslatorVisitor) processFrom(from ast.TableExpr) ([]string, error) {
 	if from == nil {
-		return nil, &TranslationError{
-			Code:    http.StatusBadRequest,
-			Message: "translator: FROM clause is required",
-		}
+		v.baseAlias = ""
+		v.baseUsesPipeline = true
+		v.basePipeline = constantSelectBasePipeline
+		v.baseFilter = ""
+		v.constantBase = true
+		return nil, nil
 	}
+	v.constantBase = false
 
 	switch t := from.(type) {
 	case *ast.TableName:
@@ -1288,7 +1295,7 @@ func (v *selectTranslatorVisitor) prepareGroupByField(expr ast.Expr, index int) 
 			return "", nil, err
 		}
 		return aliasName, []string{mathPipe}, nil
-	case *ast.BinaryExpr, *ast.UnaryExpr, *ast.NumericLiteral:
+	case *ast.BinaryExpr, *ast.UnaryExpr, *ast.NumericLiteral, *ast.StringLiteral:
 		alias := fmt.Sprintf("group_%d", index+1)
 		mathPipe, aliasName, err := v.translateMathProjection(expr, alias)
 		if err != nil {
@@ -2436,7 +2443,78 @@ func (v *selectTranslatorVisitor) buildProjectionPipes(columns []ast.SelectItem,
 			}
 			computedPipes = append(computedPipes, mathPipe)
 			fields = append(fields, formatFieldName(aliasName))
-		case *ast.BinaryExpr, *ast.UnaryExpr, *ast.NumericLiteral:
+		case *ast.NumericLiteral:
+			if aggregated {
+				groupField, ok, err := v.lookupGroupExpr(col.Expr)
+				if err != nil {
+					return nil, nil, err
+				}
+				if !ok {
+					return nil, nil, &TranslationError{
+						Code:    http.StatusBadRequest,
+						Message: fmt.Sprintf("translator: unsupported expression %T in aggregated select", expr),
+					}
+				}
+				finalName := groupField
+				if alias := strings.TrimSpace(col.Alias); alias != "" {
+					formattedAlias := formatFieldName(alias)
+					if formattedAlias != groupField {
+						renamePairs = append(renamePairs, fmt.Sprintf("%s as %s", groupField, formattedAlias))
+					}
+					finalName = formattedAlias
+				}
+				fields = append(fields, finalName)
+				continue
+			}
+			aliasTrim := strings.TrimSpace(col.Alias)
+			if aliasTrim == "" && v.constantBase {
+				computedPipes = append(computedPipes, fmt.Sprintf("format %s", expr.Value))
+				continue
+			}
+			aliasName, err := makeProjectionAlias(aliasTrim, "literal", expr.Value)
+			if err != nil {
+				return nil, nil, err
+			}
+			pipe := fmt.Sprintf("format %s as %s", expr.Value, formatFieldName(aliasName))
+			computedPipes = append(computedPipes, pipe)
+			fields = append(fields, formatFieldName(aliasName))
+		case *ast.StringLiteral:
+			if aggregated {
+				groupField, ok, err := v.lookupGroupExpr(col.Expr)
+				if err != nil {
+					return nil, nil, err
+				}
+				if !ok {
+					return nil, nil, &TranslationError{
+						Code:    http.StatusBadRequest,
+						Message: fmt.Sprintf("translator: unsupported expression %T in aggregated select", expr),
+					}
+				}
+				finalName := groupField
+				if alias := strings.TrimSpace(col.Alias); alias != "" {
+					formattedAlias := formatFieldName(alias)
+					if formattedAlias != groupField {
+						renamePairs = append(renamePairs, fmt.Sprintf("%s as %s", groupField, formattedAlias))
+					}
+					finalName = formattedAlias
+				}
+				fields = append(fields, finalName)
+				continue
+			}
+			aliasTrim := strings.TrimSpace(col.Alias)
+			value := quoteString(expr.Value)
+			if aliasTrim == "" && v.constantBase {
+				computedPipes = append(computedPipes, fmt.Sprintf("format %s", value))
+				continue
+			}
+			aliasName, err := makeProjectionAlias(aliasTrim, "literal", expr.Value)
+			if err != nil {
+				return nil, nil, err
+			}
+			pipe := fmt.Sprintf("format %s as %s", value, formatFieldName(aliasName))
+			computedPipes = append(computedPipes, pipe)
+			fields = append(fields, formatFieldName(aliasName))
+		case *ast.BinaryExpr, *ast.UnaryExpr:
 			if aggregated {
 				groupField, ok, err := v.lookupGroupExpr(col.Expr)
 				if err != nil {
