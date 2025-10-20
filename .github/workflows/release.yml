@@ -11,7 +11,7 @@ permissions:
   id-token: write
 
 jobs:
-  release:
+  release-sql-to-logsql:
     runs-on: ubuntu-latest
     steps:
 
@@ -89,4 +89,51 @@ jobs:
         with:
           args: release --clean --verbose --timeout 60m -f .goreleaser.yaml
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-logsql-jdbc:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: '0'
+          fetch-tags: 'true'
+
+      - name: Install JDK and Maven
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+          cache: 'maven'
+
+      - name: Fetch tags
+        run: |
+          if [[ "${{ github.ref_type }}" != "tag" ]]; then
+            git fetch --tags
+          else
+            echo "Skipping tag fetch - already on tag ${{ github.ref_name }}"
+          fi
+
+      - name: Update Configuration
+        working-directory: logsql-jdbc
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            TAG_VERSION=$(echo "${{ github.ref_name }}" | sed 's/^v//')
+          else
+            LATEST_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$' | head -n 1)
+            [ -z "$LATEST_TAG" ] && { echo "No release tag found"; exit 1; }
+            TAG_VERSION=$(echo "$LATEST_TAG" | sed 's/^v//')
+            echo "Using latest tag: $LATEST_TAG"
+          fi
+          mvn versions:set versions:commit -DnewVersion="${TAG_VERSION}";
+
+      - name: Publish package
+        working-directory: logsql-jdbc
+        run: |
+          mvn -s ${{ github.workspace }}/.github/workflows/settings.xml -DskipTests --batch-mode deploy
+          rm -rf */target/logsql-jdbc-*.jar
+        env:
+          USERNAME: ${{ secrets.USERNAME }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

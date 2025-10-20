@@ -1,0 +1,1 @@
+mvn -DskipTests -f logsql-jdbc/pom.xml package

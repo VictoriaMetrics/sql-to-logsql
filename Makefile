@@ -1,6 +1,6 @@
 UI_DIR=cmd/sql-to-logsql/web/ui
 
-.PHONY: ui-install ui-build build backend-build run test
+.PHONY: ui-install ui-build build backend-build run test all jdbc-build jdbc-test
 
 ui-install:
 	cd $(UI_DIR) && npm install
@@ -26,3 +26,9 @@ lint:
 	bash ./scripts/lint-all.sh
 
 all: test check lint build
+
+jdbc-build:
+	bash ./scripts/jdbc-build.sh
+
+jdbc-test:
+	bash ./scripts/jdbc-build.sh
