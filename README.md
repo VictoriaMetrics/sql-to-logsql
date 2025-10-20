@@ -15,6 +15,7 @@ It can optionally execute the resulting LogsQL against a VictoriaLogs instance, 
 
 ## Highlights
 
+- It supports [integrations](./logsql-jdbc/README.md#integrations) via [JDBC driver](./logsql-jdbc/README.md).
 - Go app + library with zero dependencies
 - Translate `SELECT`, `DESCRIBE`, `SHOW`, `CREATE`, and `DROP` statements from ANSI-like SQL into [LogsQL](https://docs.victoriametrics.com/victorialogs/logsql/) pipelines and query data from [VictoriaLogs](https://docs.victoriametrics.com/victorialogs/) or [VictoriaTraces](https://docs.victoriametrics.com/victoriatraces/).
 - Simple [Web UI](#web-ui) featuring SQL editing, example gallery, and query results rendering.
