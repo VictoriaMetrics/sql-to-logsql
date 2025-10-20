@@ -127,6 +127,41 @@ func TestToLogsQLSuccess(t *testing.T) {
 			expected: "* | offset 3",
 		},
 		{
+			name:     "select literal without from",
+			sql:      "SELECT 1",
+			expected: "* | limit 1 | delete * | format 1",
+		},
+		{
+			name:     "select literal with alias without from",
+			sql:      "SELECT 1 AS one",
+			expected: "* | limit 1 | delete * | format 1 as one | fields one",
+		},
+		{
+			name:     "select literal with from",
+			sql:      "SELECT 1 FROM logs",
+			expected: "* | format 1 as literal_1 | fields literal_1",
+		},
+		{
+			name:     "select string literal without from",
+			sql:      "SELECT 'hello'",
+			expected: "* | limit 1 | delete * | format \"hello\"",
+		},
+		{
+			name:     "select string literal with alias without from",
+			sql:      "SELECT 'hello' AS greeting",
+			expected: "* | limit 1 | delete * | format \"hello\" as greeting | fields greeting",
+		},
+		{
+			name:     "select string literal with from",
+			sql:      "SELECT 'hello' FROM logs",
+			expected: "* | format \"hello\" as literal_hello | fields literal_hello",
+		},
+		{
+			name:     "select qualified star",
+			sql:      "SELECT l.* FROM logs l",
+			expected: "*",
+		},
+		{
 			name:     "in list",
 			sql:      "SELECT * FROM logs WHERE service IN ('api', 'worker')",
 			expected: "service:(api OR worker)",
@@ -175,6 +210,16 @@ func TestToLogsQLSuccess(t *testing.T) {
 			name:     "count without alias",
 			sql:      "SELECT COUNT(*) FROM logs",
 			expected: "* | stats count()",
+		},
+		{
+			name:     "count numeric literal",
+			sql:      "SELECT COUNT(1) FROM logs",
+			expected: "* | format 1 as __const_1 | stats count(__const_1)",
+		},
+		{
+			name:     "sum numeric literal",
+			sql:      "SELECT SUM(1) FROM logs",
+			expected: "* | format 1 as __const_1 | stats sum(__const_1)",
 		},
 		{
 			name:     "trim function",
@@ -307,6 +352,16 @@ func TestToLogsQLSuccess(t *testing.T) {
 			expected: "* | sort by (_time) | running_stats count() as running_count | fields running_count",
 		},
 		{
+			name:     "window count numeric literal",
+			sql:      "SELECT COUNT(1) OVER (ORDER BY _time) AS running_count FROM logs",
+			expected: "* | sort by (_time) | format 1 as __const_1 | running_stats count(__const_1) as running_count | fields running_count",
+		},
+		{
+			name:     "window sum numeric literal",
+			sql:      "SELECT SUM(1) OVER (ORDER BY _time) AS running_total FROM logs",
+			expected: "* | sort by (_time) | format 1 as __const_1 | running_stats sum(__const_1) as running_total | fields running_total",
+		},
+		{
 			name:     "ceil function",
 			sql:      "SELECT CEIL(duration_ms / 1000.0) AS duration FROM logs",
 			expected: "* | math ceil((duration_ms / 1000.0)) as duration | fields duration",
@@ -342,6 +397,27 @@ SELECT * FROM logs WHERE level = 'warn'`,
 			name:     "group by with having",
 			sql:      "SELECT level, COUNT(*) AS total FROM logs GROUP BY level HAVING COUNT(*) > 10",
 			expected: "* | stats by (level) count() total | filter total:>10",
+		},
+		{
+			name:     "group by count numeric literal",
+			sql:      "SELECT service, COUNT(1) AS total FROM logs GROUP BY service",
+			expected: "* | format 1 as __const_1 | stats by (service) count(__const_1) total",
+		},
+		{
+			name:     "group by sum numeric literal",
+			sql:      "SELECT service, SUM(1) AS total FROM logs GROUP BY service",
+			expected: "* | format 1 as __const_1 | stats by (service) sum(__const_1) total",
+		},
+		{
+			name:     "group by without aggregates",
+			sql:      "SELECT kubernetes.container_name FROM logs GROUP BY kubernetes.container_name",
+			expected: "* | uniq by (kubernetes.container_name) | fields kubernetes.container_name",
+		},
+		{
+			name: "having aggregate constant",
+			sql:  "SELECT SUM(1) AS \"cnt_slack_079B451E84304DF1AAA4188E26F02806_ok\" FROM logs HAVING COUNT(1) > 0",
+			expected: "* | format 1 as __const_1 | stats sum(__const_1) cnt_slack_079B451E84304DF1AAA4188E26F02806_ok, count(__const_1) | " +
+				"filter \"count(__const_1)\":>0 | delete \"count(__const_1)\"",
 		},
 		{
 			name: "with simple cte",

@@ -5,6 +5,7 @@ import (
 	"maps"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -44,6 +45,8 @@ var (
 	safeFormatFieldLiteral = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 )
 
+const constantSelectBasePipeline = "* | limit 1 | delete *"
+
 type selectTranslatorVisitor struct {
 	result string
 	err    error
@@ -64,6 +67,11 @@ type selectTranslatorVisitor struct {
 	filterOrder        []string
 	filterDelete       []string
 	filterDeleteSet    map[string]struct{}
+	constantFields     map[string]string
+	constantFieldCount int
+	aggTempDeletes     map[string]string
+	aggPreserve        map[string]struct{}
+	constantBase       bool
 }
 
 type tableBinding struct {
@@ -185,6 +193,11 @@ func (v *selectTranslatorVisitor) translateSimpleSelect(stmt *ast.SelectStatemen
 	v.filterOrder = nil
 	v.filterDelete = nil
 	v.filterDeleteSet = nil
+	v.constantFields = nil
+	v.constantFieldCount = 0
+	v.aggTempDeletes = nil
+	v.aggPreserve = nil
+	v.constantBase = false
 
 	joinPipes, err := v.processFrom(stmt.From)
 	if err != nil {
@@ -246,7 +259,7 @@ func (v *selectTranslatorVisitor) translateSimpleSelect(stmt *ast.SelectStatemen
 	}
 	pipes = append(pipes, joinPipes...)
 
-	statsPipes, aggregated, err := v.buildStatsPipe(stmt)
+	statsPipes, aggregated, err := v.buildStatsPipe(stmt, stmt.Having)
 	if err != nil {
 		return "", err
 	}
@@ -266,6 +279,41 @@ func (v *selectTranslatorVisitor) translateSimpleSelect(stmt *ast.SelectStatemen
 			return "", err
 		}
 		pipes = append(pipes, "filter "+havingStr)
+		if len(v.aggTempDeletes) > 0 {
+			if len(stmt.OrderBy) > 0 {
+				for _, item := range stmt.OrderBy {
+					fn, ok := item.Expr.(*ast.FuncCall)
+					if !ok {
+						continue
+					}
+					if !isAggregateFunction(fn) {
+						continue
+					}
+					key, err := v.aggregateKeyFromFunc(fn)
+					if err != nil {
+						return "", err
+					}
+					v.preserveAggregate(key)
+				}
+			}
+			keys := make([]string, 0, len(v.aggTempDeletes))
+			for key := range v.aggTempDeletes {
+				if v.aggPreserve != nil {
+					if _, ok := v.aggPreserve[key]; ok {
+						continue
+					}
+				}
+				keys = append(keys, key)
+			}
+			if len(keys) > 0 {
+				sort.Strings(keys)
+				deleteVals := make([]string, 0, len(keys))
+				for _, key := range keys {
+					deleteVals = append(deleteVals, v.aggTempDeletes[key])
+				}
+				pipes = append(pipes, "delete "+strings.Join(deleteVals, ", "))
+			}
+		}
 	}
 
 	projectionPipes, projectionFields, err := v.buildProjectionPipes(stmt.Columns, aggregated)
@@ -389,11 +437,14 @@ func (v *selectTranslatorVisitor) buildDistinctPipe(fields []string, aggregated 
 
 func (v *selectTranslatorVisitor) processFrom(from ast.TableExpr) ([]string, error) {
 	if from == nil {
-		return nil, &TranslationError{
-			Code:    http.StatusBadRequest,
-			Message: "translator: FROM clause is required",
-		}
+		v.baseAlias = ""
+		v.baseUsesPipeline = true
+		v.basePipeline = constantSelectBasePipeline
+		v.baseFilter = ""
+		v.constantBase = true
+		return nil, nil
 	}
+	v.constantBase = false
 
 	switch t := from.(type) {
 	case *ast.TableName:
@@ -966,13 +1017,35 @@ func (v *selectTranslatorVisitor) ensureAliases(expr ast.Expr, allowed map[strin
 	return nil
 }
 
-func (v *selectTranslatorVisitor) buildStatsPipe(stmt *ast.SelectStatement) ([]string, bool, error) {
+func (v *selectTranslatorVisitor) buildStatsPipe(stmt *ast.SelectStatement, having ast.Expr) ([]string, bool, error) {
 	hasGroup := len(stmt.GroupBy) > 0
 	aggregates := make([]aggItem, 0)
 	groupFields := make([]string, 0)
 	groupLookup := make(map[string]struct{})
 	preGroupPipes := make([]string, 0)
 	aliasSources := v.collectGroupAliases(stmt.Columns)
+	aggIndex := make(map[string]int)
+
+	addAggregate := func(item aggItem) {
+		if idx, exists := aggIndex[item.key]; exists {
+			if len(item.prePipes) > 0 {
+				existing := aggregates[idx]
+				existing.prePipes = append(existing.prePipes, item.prePipes...)
+				if item.selected {
+					existing.selected = true
+				}
+				aggregates[idx] = existing
+			}
+			if item.selected && !aggregates[idx].selected {
+				existing := aggregates[idx]
+				existing.selected = true
+				aggregates[idx] = existing
+			}
+			return
+		}
+		aggIndex[item.key] = len(aggregates)
+		aggregates = append(aggregates, item)
+	}
 
 	if hasGroup {
 		v.groupExprAliases = make(map[string]string)
@@ -1055,7 +1128,8 @@ func (v *selectTranslatorVisitor) buildStatsPipe(stmt *ast.SelectStatement) ([]s
 				if err != nil {
 					return nil, false, err
 				}
-				aggregates = append(aggregates, item)
+				item.selected = true
+				addAggregate(item)
 			} else if hasGroup {
 				if _, ok, err := v.lookupGroupExpr(expr); err != nil {
 					return nil, false, err
@@ -1103,13 +1177,26 @@ func (v *selectTranslatorVisitor) buildStatsPipe(stmt *ast.SelectStatement) ([]s
 		}
 	}
 
+	if having != nil {
+		if err := v.collectAggregatesFromExpr(having, addAggregate); err != nil {
+			return nil, false, err
+		}
+	}
+
 	if len(aggregates) == 0 {
 		if hasGroup {
-			return nil, false, &TranslationError{
-				Code:    http.StatusBadRequest,
-				Message: "translator: GROUP BY requires aggregate expressions",
+			v.aggResults = make(map[string]string)
+			v.aggTempDeletes = nil
+			var pipe string
+			if len(groupFields) > 0 {
+				pipe = fmt.Sprintf("uniq by (%s)", strings.Join(groupFields, ", "))
+			} else {
+				pipe = "uniq"
 			}
+			pipes := append(preGroupPipes, pipe)
+			return pipes, true, nil
 		}
+		v.aggResults = nil
 		return nil, false, nil
 	}
 
@@ -1119,6 +1206,12 @@ func (v *selectTranslatorVisitor) buildStatsPipe(stmt *ast.SelectStatement) ([]s
 		builder.WriteString(" by (")
 		builder.WriteString(strings.Join(groupFields, ", "))
 		builder.WriteString(")")
+	}
+
+	for _, agg := range aggregates {
+		if len(agg.prePipes) > 0 {
+			preGroupPipes = append(preGroupPipes, agg.prePipes...)
+		}
 	}
 
 	funcs := make([]string, 0, len(aggregates))
@@ -1131,8 +1224,55 @@ func (v *selectTranslatorVisitor) buildStatsPipe(stmt *ast.SelectStatement) ([]s
 	builder.WriteString(strings.Join(funcs, ", "))
 
 	v.aggResults = aggResults
+	deleteTargets := make(map[string]string)
+	for _, agg := range aggregates {
+		if agg.selected {
+			continue
+		}
+		deleteTargets[agg.key] = formatFieldName(agg.resultName)
+	}
+	if len(deleteTargets) > 0 {
+		v.aggTempDeletes = deleteTargets
+	} else {
+		v.aggTempDeletes = nil
+	}
 	pipes := append(preGroupPipes, builder.String())
 	return pipes, true, nil
+}
+
+func (v *selectTranslatorVisitor) collectAggregatesFromExpr(expr ast.Expr, add func(aggItem)) error {
+	if expr == nil {
+		return nil
+	}
+	funcs := make([]*ast.FuncCall, 0)
+	walkExpr(expr, func(e ast.Expr) {
+		if fn, ok := e.(*ast.FuncCall); ok {
+			if isAggregateFunction(fn) {
+				funcs = append(funcs, fn)
+			}
+		}
+	})
+	for _, fn := range funcs {
+		if fn.Over != nil {
+			return &TranslationError{
+				Code:    http.StatusBadRequest,
+				Message: "translator: window functions are not supported in HAVING",
+			}
+		}
+		item, err := v.analyzeAggregate(fn, "")
+		if err != nil {
+			return err
+		}
+		add(item)
+	}
+	return nil
+}
+
+func (v *selectTranslatorVisitor) preserveAggregate(key string) {
+	if v.aggPreserve == nil {
+		v.aggPreserve = make(map[string]struct{})
+	}
+	v.aggPreserve[key] = struct{}{}
 }
 
 func (v *selectTranslatorVisitor) prepareGroupByField(expr ast.Expr, index int) (string, []string, error) {
@@ -1162,7 +1302,7 @@ func (v *selectTranslatorVisitor) prepareGroupByField(expr ast.Expr, index int) 
 			return "", nil, err
 		}
 		return aliasName, []string{mathPipe}, nil
-	case *ast.BinaryExpr, *ast.UnaryExpr, *ast.NumericLiteral:
+	case *ast.BinaryExpr, *ast.UnaryExpr, *ast.NumericLiteral, *ast.StringLiteral:
 		alias := fmt.Sprintf("group_%d", index+1)
 		mathPipe, aliasName, err := v.translateMathProjection(expr, alias)
 		if err != nil {
@@ -1251,6 +1391,8 @@ type aggItem struct {
 	key        string
 	statsCall  string
 	resultName string
+	prePipes   []string
+	selected   bool
 }
 
 func (v *selectTranslatorVisitor) analyzeAggregate(fn *ast.FuncCall, alias string) (aggItem, error) {
@@ -1275,24 +1417,41 @@ func (v *selectTranslatorVisitor) analyzeAggregate(fn *ast.FuncCall, alias strin
 	}
 	name := strings.ToUpper(fn.Name.Parts[len(fn.Name.Parts)-1])
 
-	var arg string
+	var (
+		keyArg   string
+		callArg  string
+		prePipes []string
+	)
 	switch name {
 	case "COUNT":
 		if len(fn.Args) == 0 {
-			arg = "*"
+			keyArg = "*"
+			callArg = "*"
 		} else if len(fn.Args) == 1 {
 			if _, ok := fn.Args[0].(*ast.StarExpr); ok {
-				arg = "*"
+				keyArg = "*"
+				callArg = "*"
 			} else if ident, ok := fn.Args[0].(*ast.Identifier); ok {
 				field, err := v.normalizeIdentifier(ident)
 				if err != nil {
 					return aggItem{}, err
 				}
-				arg = field
+				keyArg = field
+				callArg = field
+			} else if lit, ok := fn.Args[0].(*ast.NumericLiteral); ok {
+				keyArg = lit.Value
+				field, pipe, err := v.ensureConstantField(lit.Value)
+				if err != nil {
+					return aggItem{}, err
+				}
+				callArg = field
+				if pipe != "" {
+					prePipes = append(prePipes, pipe)
+				}
 			} else {
 				return aggItem{}, &TranslationError{
 					Code:    http.StatusBadRequest,
-					Message: "translator: COUNT only supports identifiers or *",
+					Message: "translator: COUNT only supports identifiers, numeric literals, or *",
 				}
 			}
 		} else {
@@ -1308,18 +1467,30 @@ func (v *selectTranslatorVisitor) analyzeAggregate(fn *ast.FuncCall, alias strin
 				Message: fmt.Sprintf("translator: %s expects single argument", strings.ToLower(name)),
 			}
 		}
-		ident, ok := fn.Args[0].(*ast.Identifier)
-		if !ok {
+		switch argExpr := fn.Args[0].(type) {
+		case *ast.Identifier:
+			field, err := v.normalizeIdentifier(argExpr)
+			if err != nil {
+				return aggItem{}, err
+			}
+			keyArg = field
+			callArg = field
+		case *ast.NumericLiteral:
+			keyArg = argExpr.Value
+			field, pipe, err := v.ensureConstantField(argExpr.Value)
+			if err != nil {
+				return aggItem{}, err
+			}
+			callArg = field
+			if pipe != "" {
+				prePipes = append(prePipes, pipe)
+			}
+		default:
 			return aggItem{}, &TranslationError{
 				Code:    http.StatusBadRequest,
-				Message: fmt.Sprintf("translator: %s only supports identifiers", strings.ToLower(name)),
+				Message: fmt.Sprintf("translator: %s only supports identifiers or numeric literals", strings.ToLower(name)),
 			}
 		}
-		field, err := v.normalizeIdentifier(ident)
-		if err != nil {
-			return aggItem{}, err
-		}
-		arg = field
 	default:
 		return aggItem{}, &TranslationError{
 			Code:    http.StatusBadRequest,
@@ -1327,15 +1498,15 @@ func (v *selectTranslatorVisitor) analyzeAggregate(fn *ast.FuncCall, alias strin
 		}
 	}
 
-	key := aggregateKey(name, arg)
-	fnCall := fmt.Sprintf("%s(%s)", strings.ToLower(name), formatAggregateArg(arg))
+	key := aggregateKey(name, keyArg)
+	fnCall := fmt.Sprintf("%s(%s)", strings.ToLower(name), formatAggregateArg(callArg))
 	alias = strings.TrimSpace(alias)
 	if alias == "" {
-		return aggItem{key: key, statsCall: fnCall, resultName: fnCall}, nil
+		return aggItem{key: key, statsCall: fnCall, resultName: fnCall, prePipes: prePipes}, nil
 	}
 	formattedAlias := formatFieldName(alias)
 	call := fmt.Sprintf("%s %s", fnCall, formattedAlias)
-	return aggItem{key: key, statsCall: call, resultName: formattedAlias}, nil
+	return aggItem{key: key, statsCall: call, resultName: formattedAlias, prePipes: prePipes}, nil
 }
 
 func isAggregateFunction(fn *ast.FuncCall) bool {
@@ -1529,6 +1700,26 @@ func sanitizeAliasFromField(field string) string {
 		return "col"
 	}
 	return value
+}
+
+func (v *selectTranslatorVisitor) ensureConstantField(value string) (string, string, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", "", &TranslationError{
+			Code:    http.StatusBadRequest,
+			Message: "translator: constant aggregate requires non-empty numeric literal",
+		}
+	}
+	if v.constantFields == nil {
+		v.constantFields = make(map[string]string)
+	}
+	if field, ok := v.constantFields[value]; ok {
+		return field, "", nil
+	}
+	v.constantFieldCount++
+	field := fmt.Sprintf("__const_%d", v.constantFieldCount)
+	pipe := fmt.Sprintf("format %s as %s", value, field)
+	v.constantFields[value] = field
+	return field, pipe, nil
 }
 
 func escapeFormatPattern(pattern string) string {
@@ -1812,8 +2003,9 @@ func (v *selectTranslatorVisitor) translateWindowFunction(fn *ast.FuncCall, alia
 	}
 	name := strings.ToUpper(fn.Name.Parts[len(fn.Name.Parts)-1])
 	var (
-		statsCall   string
-		aliasSource string
+		statsCall    string
+		aliasSource  string
+		constantPipe string
 	)
 	switch name {
 	case "SUM", "MIN", "MAX":
@@ -1826,19 +2018,28 @@ func (v *selectTranslatorVisitor) translateWindowFunction(fn *ast.FuncCall, alia
 		if err := v.ensureBaseAliasesOnly(fn.Args[0]); err != nil {
 			return nil, "", err
 		}
-		ident, ok := fn.Args[0].(*ast.Identifier)
-		if !ok {
+		switch arg := fn.Args[0].(type) {
+		case *ast.Identifier:
+			field, err := v.normalizeIdentifier(arg)
+			if err != nil {
+				return nil, "", err
+			}
+			statsCall = fmt.Sprintf("%s(%s)", strings.ToLower(name), field)
+			aliasSource = field
+		case *ast.NumericLiteral:
+			field, pipe, err := v.ensureConstantField(arg.Value)
+			if err != nil {
+				return nil, "", err
+			}
+			statsCall = fmt.Sprintf("%s(%s)", strings.ToLower(name), field)
+			aliasSource = arg.Value
+			constantPipe = pipe
+		default:
 			return nil, "", &TranslationError{
 				Code:    http.StatusBadRequest,
-				Message: fmt.Sprintf("translator: %s window function requires identifier argument", strings.ToLower(name)),
+				Message: fmt.Sprintf("translator: %s window function requires identifier or numeric literal argument", strings.ToLower(name)),
 			}
 		}
-		field, err := v.normalizeIdentifier(ident)
-		if err != nil {
-			return nil, "", err
-		}
-		statsCall = fmt.Sprintf("%s(%s)", strings.ToLower(name), field)
-		aliasSource = field
 	case "COUNT":
 		if len(fn.Args) == 0 {
 			statsCall = "count()"
@@ -1858,10 +2059,20 @@ func (v *selectTranslatorVisitor) translateWindowFunction(fn *ast.FuncCall, alia
 				}
 				statsCall = fmt.Sprintf("count(%s)", field)
 				aliasSource = field
+			case *ast.NumericLiteral:
+				field, pipe, err := v.ensureConstantField(arg.Value)
+				if err != nil {
+					return nil, "", err
+				}
+				statsCall = fmt.Sprintf("count(%s)", field)
+				aliasSource = arg.Value
+				if pipe != "" {
+					constantPipe = pipe
+				}
 			default:
 				return nil, "", &TranslationError{
 					Code:    http.StatusBadRequest,
-					Message: "translator: COUNT window function only supports identifiers or *",
+					Message: "translator: COUNT window function only supports identifiers, numeric literals, or *",
 				}
 			}
 		} else {
@@ -1917,6 +2128,9 @@ func (v *selectTranslatorVisitor) translateWindowFunction(fn *ast.FuncCall, alia
 			return nil, "", err
 		}
 		pipes = append(pipes, orderPipe)
+	}
+	if constantPipe != "" {
+		pipes = append(pipes, constantPipe)
 	}
 	statsPipe := fmt.Sprintf("running_stats%s %s as %s", partitionClause, statsCall, aliasName)
 	pipes = append(pipes, statsPipe)
@@ -2236,7 +2450,78 @@ func (v *selectTranslatorVisitor) buildProjectionPipes(columns []ast.SelectItem,
 			}
 			computedPipes = append(computedPipes, mathPipe)
 			fields = append(fields, formatFieldName(aliasName))
-		case *ast.BinaryExpr, *ast.UnaryExpr, *ast.NumericLiteral:
+		case *ast.NumericLiteral:
+			if aggregated {
+				groupField, ok, err := v.lookupGroupExpr(col.Expr)
+				if err != nil {
+					return nil, nil, err
+				}
+				if !ok {
+					return nil, nil, &TranslationError{
+						Code:    http.StatusBadRequest,
+						Message: fmt.Sprintf("translator: unsupported expression %T in aggregated select", expr),
+					}
+				}
+				finalName := groupField
+				if alias := strings.TrimSpace(col.Alias); alias != "" {
+					formattedAlias := formatFieldName(alias)
+					if formattedAlias != groupField {
+						renamePairs = append(renamePairs, fmt.Sprintf("%s as %s", groupField, formattedAlias))
+					}
+					finalName = formattedAlias
+				}
+				fields = append(fields, finalName)
+				continue
+			}
+			aliasTrim := strings.TrimSpace(col.Alias)
+			if aliasTrim == "" && v.constantBase {
+				computedPipes = append(computedPipes, fmt.Sprintf("format %s", expr.Value))
+				continue
+			}
+			aliasName, err := makeProjectionAlias(aliasTrim, "literal", expr.Value)
+			if err != nil {
+				return nil, nil, err
+			}
+			pipe := fmt.Sprintf("format %s as %s", expr.Value, formatFieldName(aliasName))
+			computedPipes = append(computedPipes, pipe)
+			fields = append(fields, formatFieldName(aliasName))
+		case *ast.StringLiteral:
+			if aggregated {
+				groupField, ok, err := v.lookupGroupExpr(col.Expr)
+				if err != nil {
+					return nil, nil, err
+				}
+				if !ok {
+					return nil, nil, &TranslationError{
+						Code:    http.StatusBadRequest,
+						Message: fmt.Sprintf("translator: unsupported expression %T in aggregated select", expr),
+					}
+				}
+				finalName := groupField
+				if alias := strings.TrimSpace(col.Alias); alias != "" {
+					formattedAlias := formatFieldName(alias)
+					if formattedAlias != groupField {
+						renamePairs = append(renamePairs, fmt.Sprintf("%s as %s", groupField, formattedAlias))
+					}
+					finalName = formattedAlias
+				}
+				fields = append(fields, finalName)
+				continue
+			}
+			aliasTrim := strings.TrimSpace(col.Alias)
+			value := quoteString(expr.Value)
+			if aliasTrim == "" && v.constantBase {
+				computedPipes = append(computedPipes, fmt.Sprintf("format %s", value))
+				continue
+			}
+			aliasName, err := makeProjectionAlias(aliasTrim, "literal", expr.Value)
+			if err != nil {
+				return nil, nil, err
+			}
+			pipe := fmt.Sprintf("format %s as %s", value, formatFieldName(aliasName))
+			computedPipes = append(computedPipes, pipe)
+			fields = append(fields, formatFieldName(aliasName))
+		case *ast.BinaryExpr, *ast.UnaryExpr:
 			if aggregated {
 				groupField, ok, err := v.lookupGroupExpr(col.Expr)
 				if err != nil {
@@ -2283,7 +2568,7 @@ func (v *selectTranslatorVisitor) buildProjectionPipes(columns []ast.SelectItem,
 	if len(renamePairs) > 0 {
 		pipes = append(pipes, "rename "+strings.Join(renamePairs, ", "))
 	}
-	if len(fields) > 0 && !aggregated {
+	if len(fields) > 0 && (!aggregated || len(v.aggResults) == 0) {
 		pipes = append(pipes, "fields "+strings.Join(fields, ", "))
 	}
 	return pipes, fields, nil
@@ -2362,10 +2647,12 @@ func (v *selectTranslatorVisitor) aggregateKeyFromFunc(fn *ast.FuncCall) (string
 					return "", err
 				}
 				arg = field
+			} else if lit, ok := fn.Args[0].(*ast.NumericLiteral); ok {
+				arg = lit.Value
 			} else {
 				return "", &TranslationError{
 					Code:    http.StatusBadRequest,
-					Message: "translator: COUNT only supports identifiers or *",
+					Message: "translator: COUNT only supports identifiers, numeric literals, or *",
 				}
 			}
 		} else {
@@ -2381,18 +2668,21 @@ func (v *selectTranslatorVisitor) aggregateKeyFromFunc(fn *ast.FuncCall) (string
 				Message: fmt.Sprintf("translator: %s expects single argument", strings.ToLower(name)),
 			}
 		}
-		ident, ok := fn.Args[0].(*ast.Identifier)
-		if !ok {
+		switch argExpr := fn.Args[0].(type) {
+		case *ast.Identifier:
+			field, err := v.normalizeIdentifier(argExpr)
+			if err != nil {
+				return "", err
+			}
+			arg = field
+		case *ast.NumericLiteral:
+			arg = argExpr.Value
+		default:
 			return "", &TranslationError{
 				Code:    http.StatusBadRequest,
-				Message: fmt.Sprintf("translator: %s only supports identifiers", strings.ToLower(name)),
+				Message: fmt.Sprintf("translator: %s only supports identifiers or numeric literals", strings.ToLower(name)),
 			}
 		}
-		field, err := v.normalizeIdentifier(ident)
-		if err != nil {
-			return "", err
-		}
-		arg = field
 	default:
 		return "", &TranslationError{
 			Code:    http.StatusBadRequest,
@@ -2510,7 +2800,7 @@ func (v *selectTranslatorVisitor) translateExpr(expr ast.Expr) (string, error) {
 				return "", err
 			}
 			if name, ok := v.aggResults[key]; ok {
-				return name, nil
+				return formatFieldName(name), nil
 			}
 		}
 		return "", &TranslationError{
@@ -2887,7 +3177,7 @@ func (v *selectTranslatorVisitor) fieldNameFromExpr(expr ast.Expr) (string, bool
 						Message: "translator: unknown aggregate referenced",
 					}
 				}
-				return name, true, nil
+				return formatFieldName(name), true, nil
 			}
 			if groupField, ok, err := v.lookupGroupExpr(e); err != nil {
 				return "", false, err

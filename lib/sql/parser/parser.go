@@ -21,8 +21,9 @@ type Parser struct {
 	l      *lexer.Lexer
 	errors []error
 
-	curToken  token.Token
-	peekToken token.Token
+	curToken   token.Token
+	peekToken  token.Token
+	peekToken2 token.Token
 
 	depth int // Current recursion depth
 }
@@ -30,7 +31,9 @@ type Parser struct {
 // New returns a parser over the provided lexer.
 func New(l *lexer.Lexer) *Parser {
 	p := &Parser{l: l, errors: make([]error, 0)}
-	p.nextToken()
+	p.curToken = token.Token{}
+	p.peekToken = p.l.NextToken()
+	p.peekToken2 = p.l.NextToken()
 	p.nextToken()
 	return p
 }
@@ -47,11 +50,13 @@ func (p *Parser) addError(pos token.Position, format string, args ...interface{}
 
 func (p *Parser) nextToken() {
 	p.curToken = p.peekToken
-	p.peekToken = p.l.NextToken()
+	p.peekToken = p.peekToken2
+	p.peekToken2 = p.l.NextToken()
 }
 
-func (p *Parser) curTokenIs(t token.Type) bool  { return p.curToken.Type == t }
-func (p *Parser) peekTokenIs(t token.Type) bool { return p.peekToken.Type == t }
+func (p *Parser) curTokenIs(t token.Type) bool      { return p.curToken.Type == t }
+func (p *Parser) peekTokenIs(t token.Type) bool     { return p.peekToken.Type == t }
+func (p *Parser) peekPeekTokenIs(t token.Type) bool { return p.peekToken2.Type == t }
 
 func (p *Parser) expectPeek(t token.Type) bool {
 	if p.peekTokenIs(t) {
@@ -655,6 +660,9 @@ func (p *Parser) parseIdentifier() *ast.Identifier {
 func (p *Parser) parseQualifiedName() *ast.Identifier {
 	parts := []string{p.curToken.Literal}
 	for p.peekTokenIs(token.DOT) {
+		if p.peekPeekTokenIs(token.STAR) {
+			break
+		}
 		p.nextToken()
 		if !p.expectPeek(token.IDENT) {
 			return &ast.Identifier{Parts: parts}
