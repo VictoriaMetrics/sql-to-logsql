@@ -3550,7 +3550,7 @@ func formatWildcard(val string) string {
 
 func needsQuoteForPattern(val string) bool {
 	for _, r := range val {
-		if r != '*' && r != '_' && r != '-' && r != ':' && r != '/' && r != '.' && (r < '0' || r > '9') && (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') {
+		if r != '*' && r != '_' && r != '-' && r != ':' && (r < '0' || r > '9') && (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') {
 			return true
 		}
 	}

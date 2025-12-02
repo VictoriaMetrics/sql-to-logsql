@@ -247,6 +247,11 @@ func TestToLogsQLSuccess(t *testing.T) {
 			expected: "message:~\"^.foo$\"",
 		},
 		{
+			name:     "like suffix paths with dots",
+			sql:      "SELECT * FROM logs WHERE RequestPath LIKE '%/favicon.ico' OR RequestPath LIKE '%index.html'",
+			expected: "(RequestPath:\"*/favicon.ico\" OR RequestPath:\"*index.html\")",
+		},
+		{
 			name:     "compare fields equality",
 			sql:      "SELECT * FROM logs WHERE user_id = customer_id",
 			expected: "user_id:eq_field(customer_id)",
@@ -351,6 +356,11 @@ END AS severity FROM logs`,
 			name:     "case expression with operand",
 			sql:      "SELECT CASE level WHEN 'error' THEN 'critical' WHEN 'warn' THEN 'warning' ELSE 'info' END AS sev FROM logs",
 			expected: "* | format \"info\" as sev | format if (level:warn) \"warning\" as sev | format if (level:error) \"critical\" as sev | fields sev",
+		},
+		{
+			name:     "case expression with like wildcard",
+			sql:      "SELECT ResponseStatus, CASE WHEN RequestPath LIKE ('%/foo') THEN 'foo' ELSE 'unknown' END AS MyType FROM logs",
+			expected: "* | format \"unknown\" as MyType | format if (RequestPath:\"*/foo\") \"foo\" as MyType | fields ResponseStatus, MyType",
 		},
 		{
 			name:     "json value simple path with alias",
