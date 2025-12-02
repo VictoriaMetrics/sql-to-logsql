@@ -16,13 +16,15 @@ import {COMPLETIONS} from "@/components/sql-editor/complections.ts";
 import {CircleXIcon, CircleCheckBigIcon, PlayIcon, ListFilterIcon} from "lucide-react"
 import {Spinner} from "@/components/ui/spinner.tsx";
 import {Badge} from "@/components/ui/badge.tsx";
+import {cn} from "@/lib/utils";
 
 export interface SqlEditorProps {
   readonly onRun?: (sql: string) => void;
   readonly isLoading?: boolean;
   readonly error?: string;
   readonly success?: string;
-  readonly limit?: number
+  readonly limit?: number;
+  readonly className?: string;
 }
 
 export function SQLEditor({
@@ -31,6 +33,7 @@ export function SQLEditor({
   error,
   success,
   limit,
+  className,
 }: SqlEditorProps) {
   const [value, setValue] = useState<string>(DEFAULT_EXAMPLE_ID);
   const [sql, setSql] = useState("");
@@ -51,7 +54,7 @@ export function SQLEditor({
   }, [value]);
 
   return (
-    <Card>
+    <Card className={cn("w-full h-full", className)}>
       <CardHeader className={"max-sm:flex max-sm:flex-col max-sm:gap-4 max-sm:px-4"}>
         <CardTitle className={"sm:py-3"}>SQL</CardTitle>
         <CardAction className={"flex max-sm:flex-col gap-2 w-full"}>
@@ -77,14 +80,13 @@ export function SQLEditor({
           </Button>
         </CardAction>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex-1 min-h-0">
         <Editor
-          className={
-            isLoading
-              ? "pointer-events-none opacity-50 select-none grayscale-50"
-              : ""
-          }
-          height={200}
+          className={cn(
+            "h-full",
+            isLoading ? "pointer-events-none opacity-50 select-none grayscale-50" : ""
+          )}
+          height="100%"
           defaultLanguage="sql"
           theme="vs-light"
           value={sql}

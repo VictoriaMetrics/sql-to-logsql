@@ -4,6 +4,7 @@ import {useCallback, useEffect, useState} from "react";
 import { QueryResults } from "@/components/query-results";
 import {toast} from "sonner";
 import {Docs} from "@/components/docs";
+import {ResizableHandle, ResizablePanel, ResizablePanelGroup} from "@/components/ui/resizable";
 
 const formatExecutionTime = (ms: number): string => {
   if (!Number.isFinite(ms) || ms < 0) {
@@ -87,30 +88,52 @@ export function Main() {
   }, [bearerToken, endpointUrl, endpointReadOnly, endpointEnabled]);
 
   return (
-    <main className={"p-4 w-full flex flex-col gap-4"}>
-      <div className={"w-full flex gap-4"}>
-        <div className={"w-full flex flex-col gap-4  min-w-[20rem] max-w-[64rem]"}>
-          <LogsEndpoint
-            endpointUrl={endpointUrl}
-            onUrlChange={setEndpointUrl}
-            bearerToken={bearerToken}
-            onTokenChange={setBearerToken}
-            isLoading={loading}
-            endpointReadOnly={endpointReadOnly}
-            endpointEnabled={endpointEnabled}
-            onEndpointEnabledChange={setEndpointEnabled}
-          />
-          <SQLEditor
-            onRun={handleExecute}
-            isLoading={loading}
-            error={error}
-            success={success}
-            limit={limit}
-          />
-        </div>
-        <Docs />
-      </div>
-      <QueryResults query={query} data={results} isLoading={loading} endpointEnabled={endpointEnabled} />
+    <main className={"p-4 w-full min-h-screen flex flex-col gap-4"}>
+      <ResizablePanelGroup direction="vertical" className="flex-1 min-h-0">
+        <ResizablePanel defaultSize={60} minSize={40}>
+          <ResizablePanelGroup direction="horizontal" className="h-full min-h-0">
+            <ResizablePanel defaultSize={60} minSize={45} className="flex flex-col min-h-0">
+              <div className="flex h-full w-full flex-col gap-4 min-h-0 min-w-[20rem]">
+                <div className="shrink-0">
+                  <LogsEndpoint
+                    endpointUrl={endpointUrl}
+                    onUrlChange={setEndpointUrl}
+                    bearerToken={bearerToken}
+                    onTokenChange={setBearerToken}
+                    isLoading={loading}
+                    endpointReadOnly={endpointReadOnly}
+                    endpointEnabled={endpointEnabled}
+                    onEndpointEnabledChange={setEndpointEnabled}
+                  />
+                </div>
+                <SQLEditor
+                  onRun={handleExecute}
+                  isLoading={loading}
+                  error={error}
+                  success={success}
+                  limit={limit}
+                  className="flex-1 min-h-0"
+                />
+              </div>
+            </ResizablePanel>
+            <ResizableHandle withHandle className={"m-2"} />
+            <ResizablePanel defaultSize={30} minSize={20} className="flex">
+              <Docs />
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </ResizablePanel>
+        <ResizableHandle withHandle className={"m-2"} />
+        <ResizablePanel defaultSize={40} minSize={10} className="min-h-0">
+          <div className="h-full overflow-auto">
+            <QueryResults
+              query={query}
+              data={results}
+              isLoading={loading}
+              endpointEnabled={endpointEnabled}
+            />
+          </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </main>
   );
 }
