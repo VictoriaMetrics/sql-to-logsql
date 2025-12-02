@@ -1599,6 +1599,9 @@ func (v *selectTranslatorVisitor) translateStringFunction(fn *ast.FuncCall, alia
 	case "REPLACE":
 		pipes, aliasName, err := v.translateReplaceFunction(fn, alias)
 		return pipes, aliasName, true, err
+	case "REGEXP_REPLACE":
+		pipes, aliasName, err := v.translateRegexpReplaceFunction(fn, alias)
+		return pipes, aliasName, true, err
 	case "JSON_VALUE":
 		pipes, aliasName, err := v.translateJSONValueFunction(fn, alias)
 		return pipes, aliasName, true, err
@@ -1829,6 +1832,37 @@ func parseSubstringIntArg(expr ast.Expr, name string) (int, error) {
 	return val, nil
 }
 
+func parsePositiveIntLiteral(expr ast.Expr, context string) (int, error) {
+	lit, ok := expr.(*ast.NumericLiteral)
+	if !ok {
+		return 0, &TranslationError{
+			Code:    http.StatusBadRequest,
+			Message: fmt.Sprintf("translator: %s must be integer literal", context),
+		}
+	}
+	clean := strings.ReplaceAll(strings.TrimSpace(lit.Value), "_", "")
+	if clean == "" || strings.ContainsAny(clean, ".eE") {
+		return 0, &TranslationError{
+			Code:    http.StatusBadRequest,
+			Message: fmt.Sprintf("translator: %s must be integer literal", context),
+		}
+	}
+	val, err := strconv.Atoi(clean)
+	if err != nil {
+		return 0, &TranslationError{
+			Code:    http.StatusBadRequest,
+			Message: fmt.Sprintf("translator: %s must be integer literal", context),
+		}
+	}
+	if val < 1 {
+		return 0, &TranslationError{
+			Code:    http.StatusBadRequest,
+			Message: fmt.Sprintf("translator: %s must be positive integer", context),
+		}
+	}
+	return val, nil
+}
+
 func (v *selectTranslatorVisitor) translateConcatFunction(fn *ast.FuncCall, alias string) ([]string, string, error) {
 	if len(fn.Args) == 0 {
 		return nil, "", &TranslationError{
@@ -1925,6 +1959,64 @@ func (v *selectTranslatorVisitor) translateReplaceFunction(fn *ast.FuncCall, ali
 	pattern := fmt.Sprintf("<%s>", rawField)
 	copyPipe := fmt.Sprintf("format \"%s\" as %s", escapeFormatPattern(pattern), aliasName)
 	replacePipe := fmt.Sprintf("replace ('%s', '%s') at %s", escapeSingleQuotes(searchVal), escapeSingleQuotes(replaceVal), aliasName)
+	return []string{copyPipe, replacePipe}, aliasName, nil
+}
+
+func (v *selectTranslatorVisitor) translateRegexpReplaceFunction(fn *ast.FuncCall, alias string) ([]string, string, error) {
+	if len(fn.Args) < 3 || len(fn.Args) > 4 {
+		return nil, "", &TranslationError{
+			Code:    http.StatusBadRequest,
+			Message: "translator: regexp_replace expects three or four arguments",
+		}
+	}
+	ident, ok := fn.Args[0].(*ast.Identifier)
+	if !ok {
+		return nil, "", &TranslationError{
+			Code:    http.StatusBadRequest,
+			Message: "translator: regexp_replace only supports identifiers as first argument",
+		}
+	}
+	rawField, err := v.rawFieldName(ident)
+	if err != nil {
+		return nil, "", err
+	}
+	patternLit, err := literalFromExpr(fn.Args[1])
+	if err != nil {
+		return nil, "", err
+	}
+	if patternLit.kind != literalString {
+		return nil, "", &TranslationError{
+			Code:    http.StatusBadRequest,
+			Message: "translator: regexp_replace pattern must be string literal",
+		}
+	}
+	replaceLit, err := literalFromExpr(fn.Args[2])
+	if err != nil {
+		return nil, "", err
+	}
+	if replaceLit.kind != literalString {
+		return nil, "", &TranslationError{
+			Code:    http.StatusBadRequest,
+			Message: "translator: regexp_replace replacement must be string literal",
+		}
+	}
+
+	var limitClause string
+	if len(fn.Args) == 4 {
+		limit, err := parsePositiveIntLiteral(fn.Args[3], "regexp_replace limit")
+		if err != nil {
+			return nil, "", err
+		}
+		limitClause = fmt.Sprintf(" limit %d", limit)
+	}
+
+	aliasName, err := makeProjectionAlias(strings.TrimSpace(alias), "regexp_replace", rawField)
+	if err != nil {
+		return nil, "", err
+	}
+	pattern := fmt.Sprintf("<%s>", rawField)
+	copyPipe := fmt.Sprintf("format \"%s\" as %s", escapeFormatPattern(pattern), aliasName)
+	replacePipe := fmt.Sprintf("replace_regexp ('%s', '%s') at %s%s", escapeSingleQuotes(patternLit.value), escapeSingleQuotes(replaceLit.value), aliasName, limitClause)
 	return []string{copyPipe, replacePipe}, aliasName, nil
 }
 

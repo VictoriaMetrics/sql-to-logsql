@@ -136,7 +136,7 @@ Supported highlights:
 - `SELECT` with :
   - aliases, 
   - arithmetic expressions, 
-  - string helpers (`SUBSTR`, `CONCAT`, `TRIM`, `REPLACE`, `LOWER`, `UPPER`), 
+  - string helpers (`SUBSTR`, `CONCAT`, `TRIM`, `REPLACE`, `LOWER`, `UPPER`, `REGEXP_REPLACE`), 
   - math (`ABS`, `CEIL`, `FLOOR`, `ROUND`, `LEAST`, `GREATEST`), 
   - JSON (`JSON_VALUE`),
   - `CASE`/`WHEN`,

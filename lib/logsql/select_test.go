@@ -327,6 +327,16 @@ func TestToLogsQLSuccess(t *testing.T) {
 			expected: "* | format \"<message>\" as updated | replace ('foo', 'bar') at updated | fields updated",
 		},
 		{
+			name:     "regexp replace function",
+			sql:      "SELECT REGEXP_REPLACE(message, 'host-(.+?)-foo', '$1') AS cleaned FROM logs",
+			expected: "* | format \"<message>\" as cleaned | replace_regexp ('host-(.+?)-foo', '$1') at cleaned | fields cleaned",
+		},
+		{
+			name:     "regexp replace with limit and default alias",
+			sql:      "SELECT REGEXP_REPLACE(message, 'password: [^ ]+', '', 1) FROM logs",
+			expected: "* | format \"<message>\" as regexp_replace_message | replace_regexp ('password: [^ ]+', '') at regexp_replace_message limit 1 | fields regexp_replace_message",
+		},
+		{
 			name: "case expression",
 			sql: `SELECT CASE
     WHEN score >= 90 THEN 'critical'
@@ -701,6 +711,60 @@ func TestJSONValueTranslationErrors(t *testing.T) {
 			name:    "unsupported characters in path segment",
 			sql:     "SELECT JSON_VALUE(payload, '$.user.name$') FROM logs",
 			message: `translator: JSON_VALUE path segment "name$" contains unsupported characters`,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := translate(t, tt.sql)
+			if err == nil {
+				t.Fatalf("expected error for %q", tt.sql)
+			}
+			var te *logsql.TranslationError
+			if !errors.As(err, &te) {
+				t.Fatalf("expected TranslationError, got %T", err)
+			}
+			if te.Message != tt.message {
+				t.Fatalf("unexpected error message: want %q, got %q", tt.message, te.Message)
+			}
+		})
+	}
+}
+
+func TestRegexpReplaceTranslationErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		sql     string
+		message string
+	}{
+		{
+			name:    "missing arguments",
+			sql:     "SELECT REGEXP_REPLACE(message, 'foo') FROM logs",
+			message: "translator: regexp_replace expects three or four arguments",
+		},
+		{
+			name:    "non identifier first argument",
+			sql:     "SELECT REGEXP_REPLACE('message', 'foo', 'bar') FROM logs",
+			message: "translator: regexp_replace only supports identifiers as first argument",
+		},
+		{
+			name:    "pattern not string literal",
+			sql:     "SELECT REGEXP_REPLACE(message, 1, 'bar') FROM logs",
+			message: "translator: regexp_replace pattern must be string literal",
+		},
+		{
+			name:    "replacement not string literal",
+			sql:     "SELECT REGEXP_REPLACE(message, 'foo', 1) FROM logs",
+			message: "translator: regexp_replace replacement must be string literal",
+		},
+		{
+			name:    "limit not positive",
+			sql:     "SELECT REGEXP_REPLACE(message, 'foo', 'bar', 0) FROM logs",
+			message: "translator: regexp_replace limit must be positive integer",
 		},
 	}
 

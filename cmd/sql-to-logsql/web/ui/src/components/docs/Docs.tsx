@@ -81,7 +81,7 @@ export function Docs() {
            <AccordionContent className="flex flex-col gap-4 text-balance">
              <p>
                <ul className={"list-disc pl-4 pt-2"}>
-                 <li><code>SUBSTR, CONCAT, LOWER, UPPER, TRIM, LTRIM, RTRIM, REPLACE</code></li>
+                 <li><code>SUBSTR, CONCAT, LOWER, UPPER, TRIM, LTRIM, RTRIM, REPLACE, REGEXP_REPLACE</code></li>
                  <li><code>CASE/WHEN, LIKE, NOT LIKE, =, !=, &lt;, &gt;, &lt;=, &gt;=, BETWEEN</code></li>
                  <li><code>+,-, *, /, %, ^</code></li>
                  <li><code>ABS, GREATEST, LEAST, ROUND, FLOOR, CEIL, POW, LN, EXP</code></li>
