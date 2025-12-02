@@ -7,7 +7,7 @@ import {Badge} from "@/components/ui/badge.tsx";
 
 export function Docs() {
   return (
-   <Card className={"w-full min-w-[20rem] max-lg:hidden"}>
+   <Card className={"w-full max-h-full min-w-[20rem] overflow-y-scroll"}>
      <CardHeader>
        <CardTitle className={"flex flex-row gap-2 items-center"}>
          <span>Information about SQL to LogsQL</span>
