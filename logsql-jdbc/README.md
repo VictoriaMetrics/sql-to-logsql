@@ -74,7 +74,7 @@ These integration tests connect to https://play-sql.victoriametrics.com. They wi
   <dependency>
       <groupId>com.victoriametrics</groupId>
       <artifactId>logsql-jdbc</artifactId>
-      <version>0.8.0</version>
+      <version>0.9.0</version>
   </dependency>
   ```
 
@@ -107,7 +107,7 @@ These integration tests connect to https://play-sql.victoriametrics.com. They wi
 
 ### JetBrains IDEs
 
-1. Download `logsql-jdbc-0.8.0-all.jar` file from [maven package](https://github.com/VictoriaMetrics/sql-to-logsql/packages/2708242): [download file](https://github-registry-files.githubusercontent.com/1068003892/ea4eae80-adbb-11f0-9457-605837395e31?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20251020%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20251020T150325Z&X-Amz-Expires=300&X-Amz-Signature=992043563ba10abf6b5b9615e4493032c81a02bca67254291b3f1416a7fccae3&X-Amz-SignedHeaders=host&response-content-disposition=filename%3Dlogsql-jdbc-0.8.0-all.jar&response-content-type=application%2Foctet-stream)
+1. Download `logsql-jdbc-0.9.0-all.jar` file from [maven package](https://github.com/VictoriaMetrics/sql-to-logsql/packages/2708242): [download file](https://github-registry-files.githubusercontent.com/1068003892/ea4eae80-adbb-11f0-9457-605837395e31?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20251020%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20251020T150325Z&X-Amz-Expires=300&X-Amz-Signature=992043563ba10abf6b5b9615e4493032c81a02bca67254291b3f1416a7fccae3&X-Amz-SignedHeaders=host&response-content-disposition=filename%3Dlogsql-jdbc-0.9.0-all.jar&response-content-type=application%2Foctet-stream)
 
 2. "Database" panel -> Create Data Source -> Driver:
 
@@ -115,7 +115,7 @@ These integration tests connect to https://play-sql.victoriametrics.com. They wi
    
     ![Add driver](jetbrains-1.png)
 
-  - 2.2. Add `logsql-jdbc-0.8.0-all.jar` file as "Custom JAR" and select driver class
+  - 2.2. Add `logsql-jdbc-0.9.0-all.jar` file as "Custom JAR" and select driver class
    
     ![Add driver](jetbrains-2.png)
 
@@ -133,9 +133,9 @@ These integration tests connect to https://play-sql.victoriametrics.com. They wi
 
 ### Tableau
 
-1. Download `logsql-jdbc-0.8.0-all.jar` file from [maven package](https://github.com/VictoriaMetrics/sql-to-logsql/packages/2708242): [download file](https://github-registry-files.githubusercontent.com/1068003892/ea4eae80-adbb-11f0-9457-605837395e31?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20251020%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20251020T150325Z&X-Amz-Expires=300&X-Amz-Signature=992043563ba10abf6b5b9615e4493032c81a02bca67254291b3f1416a7fccae3&X-Amz-SignedHeaders=host&response-content-disposition=filename%3Dlogsql-jdbc-0.8.0-all.jar&response-content-type=application%2Foctet-stream)
+1. Download `logsql-jdbc-0.9.0-all.jar` file from [maven package](https://github.com/VictoriaMetrics/sql-to-logsql/packages/2708242): [download file](https://github-registry-files.githubusercontent.com/1068003892/ea4eae80-adbb-11f0-9457-605837395e31?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20251020%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20251020T150325Z&X-Amz-Expires=300&X-Amz-Signature=992043563ba10abf6b5b9615e4493032c81a02bca67254291b3f1416a7fccae3&X-Amz-SignedHeaders=host&response-content-disposition=filename%3Dlogsql-jdbc-0.9.0-all.jar&response-content-type=application%2Foctet-stream)
 
-2. Put the `logsql-jdbc-0.8.0-all.jar` file into the [Tableau Drivers folder](https://help.tableau.com/current/pro/desktop/en-us/examples_otherdatabases_jdbc.htm#specify-the-right-jdbc-driver)
+2. Put the `logsql-jdbc-0.9.0-all.jar` file into the [Tableau Drivers folder](https://help.tableau.com/current/pro/desktop/en-us/examples_otherdatabases_jdbc.htm#specify-the-right-jdbc-driver)
 
 3. Connect -> To a Server -> Other databases (JDBC):
 
