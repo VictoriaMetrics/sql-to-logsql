@@ -418,6 +418,25 @@ func (r *renderer) renderExpr(expr ast.Expr) {
 		r.write("EXISTS (")
 		r.renderSelect(e.Subquery)
 		r.write(")")
+	case *ast.CaseExpr:
+		r.write("CASE ")
+		if e.Operand != nil {
+			r.renderExpr(e.Operand)
+			r.write(" ")
+		}
+		for _, clause := range e.When {
+			r.write("WHEN ")
+			r.renderExpr(clause.Condition)
+			r.write(" THEN ")
+			r.renderExpr(clause.Result)
+			r.write(" ")
+		}
+		if e.Else != nil {
+			r.write("ELSE ")
+			r.renderExpr(e.Else)
+			r.write(" ")
+		}
+		r.write("END")
 	case *ast.SubqueryExpr:
 		r.write("(")
 		r.renderSelect(e.Select)

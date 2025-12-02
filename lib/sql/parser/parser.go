@@ -738,6 +738,8 @@ func (p *Parser) parseExpression(precedence int) ast.Expr {
 		left = p.parseQualifiedName()
 	case token.REPLACE:
 		left = &ast.Identifier{Parts: []string{p.curToken.Literal}}
+	case token.CASE:
+		left = p.parseCaseExpression()
 	case token.NUMBER:
 		left = &ast.NumericLiteral{Value: p.curToken.Literal}
 	case token.STRING:
@@ -790,11 +792,53 @@ func (p *Parser) parseExpression(precedence int) ast.Expr {
 func terminatesExpression(t token.Type) bool {
 	switch t {
 	case token.SEMICOLON, token.COMMA, token.RPAREN, token.GROUP, token.ORDER, token.LIMIT, token.OFFSET,
-		token.HAVING, token.UNION, token.INTERSECT, token.EXCEPT:
+		token.HAVING, token.UNION, token.INTERSECT, token.EXCEPT, token.THEN, token.ELSE, token.END:
 		return true
 	default:
 		return false
 	}
+}
+
+func (p *Parser) parseCaseExpression() ast.Expr {
+	caseExpr := &ast.CaseExpr{}
+
+	if !p.peekTokenIs(token.WHEN) {
+		p.nextToken()
+		caseExpr.Operand = p.parseExpression(lowest)
+		if !p.expectPeek(token.WHEN) {
+			return caseExpr
+		}
+	} else {
+		p.nextToken()
+	}
+
+	for p.curTokenIs(token.WHEN) {
+		p.nextToken()
+		cond := p.parseExpression(lowest)
+		if !p.expectPeek(token.THEN) {
+			return caseExpr
+		}
+		p.nextToken()
+		result := p.parseExpression(lowest)
+		caseExpr.When = append(caseExpr.When, ast.WhenClause{
+			Condition: cond,
+			Result:    result,
+		})
+		if p.peekTokenIs(token.WHEN) {
+			p.nextToken()
+		} else {
+			break
+		}
+	}
+
+	if p.peekTokenIs(token.ELSE) {
+		p.nextToken()
+		p.nextToken()
+		caseExpr.Else = p.parseExpression(lowest)
+	}
+
+	p.expectPeek(token.END)
+	return caseExpr
 }
 
 func (p *Parser) parseExistsExpression(negate bool) ast.Expr {
