@@ -89,6 +89,27 @@ WHERE container IS NOT NULL
 ORDER BY total DESC`,
     },
     {
+        id: "case",
+        title: "Case expression",
+        sql: `SELECT
+    x.severity,
+    COUNT(x.severity)
+FROM (
+    SELECT
+        CASE log.level
+            WHEN 'dpanic' THEN 'critical'
+            WHEN 'panic' THEN 'critical'
+            WHEN 'error' THEN 'high'
+            WHEN 'warn' THEN 'medium'
+            WHEN 'info' THEN 'low'
+            ELSE 'unknown'
+        END as severity
+    FROM logs
+    WHERE log.level IS NOT NULL
+) x
+GROUP BY x.severity`,
+    },
+    {
         id: "subqueries",
         title: "Subqueries",
         sql: `SELECT UPPER(container), total

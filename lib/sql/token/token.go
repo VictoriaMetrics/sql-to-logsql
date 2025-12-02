@@ -61,6 +61,7 @@ const (
 	INSERT       Type = "INSERT"
 	UPDATE       Type = "UPDATE"
 	DELETE       Type = "DELETE"
+	CASE         Type = "CASE"
 	INTO         Type = "INTO"
 	VALUES       Type = "VALUES"
 	SET          Type = "SET"
@@ -73,6 +74,10 @@ const (
 	LIMIT        Type = "LIMIT"
 	OFFSET       Type = "OFFSET"
 	AS           Type = "AS"
+	WHEN         Type = "WHEN"
+	THEN         Type = "THEN"
+	ELSE         Type = "ELSE"
+	END          Type = "END"
 	IF           Type = "IF"
 	DISTINCT     Type = "DISTINCT"
 	WITH         Type = "WITH"
@@ -124,6 +129,7 @@ var keywords = map[string]Type{
 	"INSERT":       INSERT,
 	"UPDATE":       UPDATE,
 	"DELETE":       DELETE,
+	"CASE":         CASE,
 	"INTO":         INTO,
 	"VALUES":       VALUES,
 	"SET":          SET,
@@ -136,6 +142,10 @@ var keywords = map[string]Type{
 	"LIMIT":        LIMIT,
 	"OFFSET":       OFFSET,
 	"AS":           AS,
+	"WHEN":         WHEN,
+	"THEN":         THEN,
+	"ELSE":         ELSE,
+	"END":          END,
 	"IF":           IF,
 	"DISTINCT":     DISTINCT,
 	"WITH":         WITH,

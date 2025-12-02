@@ -2193,6 +2193,117 @@ func (v *selectTranslatorVisitor) translateMathProjection(expr ast.Expr, alias s
 	return pipe, aliasName, nil
 }
 
+func (v *selectTranslatorVisitor) translateCaseExpr(expr *ast.CaseExpr, alias string) ([]string, string, error) {
+	if expr == nil || len(expr.When) == 0 {
+		return nil, "", &TranslationError{
+			Code:    http.StatusBadRequest,
+			Message: "translator: CASE expression requires WHEN clauses",
+		}
+	}
+
+	aliasSource := "case"
+	if rendered, err := render.Render(expr); err == nil {
+		aliasSource = rendered
+	}
+	aliasName, err := makeProjectionAlias(strings.TrimSpace(alias), "case", aliasSource)
+	if err != nil {
+		return nil, "", err
+	}
+	aliasField := formatFieldName(aliasName)
+
+	tmp := v.cloneForConditionalEvaluation()
+	conditions := make([]string, len(expr.When))
+	for i, clause := range expr.When {
+		condExpr := clause.Condition
+		if expr.Operand != nil {
+			condExpr = &ast.BinaryExpr{
+				Left:     expr.Operand,
+				Operator: "=",
+				Right:    clause.Condition,
+			}
+		}
+		cond, err := tmp.translateExpr(condExpr)
+		if err != nil {
+			return nil, "", err
+		}
+		conditions[i] = cond
+	}
+	prePipes := tmp.collectFilterPrefilters()
+	cleanup := tmp.collectFilterCleanup()
+
+	results := make([]string, len(expr.When))
+	for i, clause := range expr.When {
+		val, err := v.caseResultValue(clause.Result)
+		if err != nil {
+			return nil, "", err
+		}
+		results[i] = val
+	}
+
+	elseVal := quoteString("")
+	if expr.Else != nil {
+		val, err := v.caseResultValue(expr.Else)
+		if err != nil {
+			return nil, "", err
+		}
+		elseVal = val
+	}
+
+	pipes := make([]string, 0, len(prePipes)+len(expr.When)+2)
+	pipes = append(pipes, prePipes...)
+	pipes = append(pipes, fmt.Sprintf("format %s as %s", elseVal, aliasField))
+	for i := len(expr.When) - 1; i >= 0; i-- {
+		pipes = append(pipes, fmt.Sprintf("format if (%s) %s as %s", conditions[i], results[i], aliasField))
+	}
+	pipes = append(pipes, cleanup...)
+
+	return pipes, aliasName, nil
+}
+
+func (v *selectTranslatorVisitor) caseResultValue(expr ast.Expr) (string, error) {
+	switch e := expr.(type) {
+	case *ast.StringLiteral:
+		return quoteString(e.Value), nil
+	case *ast.NumericLiteral:
+		return e.Value, nil
+	case *ast.BooleanLiteral:
+		if e.Value {
+			return "true", nil
+		}
+		return "false", nil
+	case *ast.Identifier:
+		field, err := v.rawFieldName(e)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("\"<%s>\"", escapeFormatPattern(field)), nil
+	case *ast.FuncCall:
+		if v.aggResults != nil && isAggregateFunction(e) {
+			key, err := v.aggregateKeyFromFunc(e)
+			if err != nil {
+				return "", err
+			}
+			name, ok := v.aggResults[key]
+			if !ok {
+				return "", &TranslationError{
+					Code:    http.StatusBadRequest,
+					Message: "translator: unknown aggregate referenced in CASE result",
+				}
+			}
+			return fmt.Sprintf("\"<%s>\"", escapeFormatPattern(formatFieldName(name))), nil
+		}
+		return "", &TranslationError{
+			Code:    http.StatusBadRequest,
+			Message: fmt.Sprintf("translator: unsupported function %T in CASE result", e),
+		}
+	default:
+		return "", &TranslationError{
+			Code:    http.StatusBadRequest,
+			Message: fmt.Sprintf("translator: unsupported CASE result expression %T", e),
+		}
+	}
+}
+
 func (v *selectTranslatorVisitor) mathExprToString(expr ast.Expr) (string, error) {
 	switch e := expr.(type) {
 	case *ast.NumericLiteral:
@@ -2549,6 +2660,13 @@ func (v *selectTranslatorVisitor) buildProjectionPipes(columns []ast.SelectItem,
 				return nil, nil, err
 			}
 			computedPipes = append(computedPipes, mathPipe)
+			fields = append(fields, formatFieldName(aliasName))
+		case *ast.CaseExpr:
+			pipes, aliasName, err := v.translateCaseExpr(expr, col.Alias)
+			if err != nil {
+				return nil, nil, err
+			}
+			computedPipes = append(computedPipes, pipes...)
 			fields = append(fields, formatFieldName(aliasName))
 		case *ast.StarExpr:
 			return nil, nil, &TranslationError{
@@ -3021,6 +3139,20 @@ func (v *selectTranslatorVisitor) translateIsNullExpr(expr *ast.IsNullExpr) (str
 		return field + ":*", nil
 	}
 	return field + ":\"\"", nil
+}
+
+func (v *selectTranslatorVisitor) cloneForConditionalEvaluation() *selectTranslatorVisitor {
+	clone := *v
+	clone.result = ""
+	clone.err = nil
+	clone.pendingLeftFilter = nil
+	clone.filterComputations = nil
+	clone.filterOrder = nil
+	clone.filterDelete = nil
+	clone.filterDeleteSet = nil
+	clone.aggTempDeletes = nil
+	clone.aggPreserve = nil
+	return &clone
 }
 
 func (v *selectTranslatorVisitor) ensureFilterFunctionAlias(fn *ast.FuncCall) (string, error) {

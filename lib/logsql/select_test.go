@@ -327,6 +327,22 @@ func TestToLogsQLSuccess(t *testing.T) {
 			expected: "* | format \"<message>\" as updated | replace ('foo', 'bar') at updated | fields updated",
 		},
 		{
+			name: "case expression",
+			sql: `SELECT CASE
+    WHEN score >= 90 THEN 'critical'
+    WHEN score >= 75 THEN 'high'
+    WHEN score >= 50 THEN 'medium'
+    WHEN score >= 25 THEN 'low'
+    ELSE 'info'
+END AS severity FROM logs`,
+			expected: "* | format \"info\" as severity | format if (score:>=25) \"low\" as severity | format if (score:>=50) \"medium\" as severity | format if (score:>=75) \"high\" as severity | format if (score:>=90) \"critical\" as severity | fields severity",
+		},
+		{
+			name:     "case expression with operand",
+			sql:      "SELECT CASE level WHEN 'error' THEN 'critical' WHEN 'warn' THEN 'warning' ELSE 'info' END AS sev FROM logs",
+			expected: "* | format \"info\" as sev | format if (level:warn) \"warning\" as sev | format if (level:error) \"critical\" as sev | fields sev",
+		},
+		{
 			name:     "json value simple path with alias",
 			sql:      "SELECT JSON_VALUE(payload, '$.ip') AS ip FROM logs",
 			expected: "* | unpack_json from payload fields (ip) | fields ip",
