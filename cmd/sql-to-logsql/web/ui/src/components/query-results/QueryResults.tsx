@@ -1,4 +1,10 @@
-import {Card, CardContent, CardDescription, CardHeader, CardTitle} from "../ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "../ui/card";
 import { QueryResultsTable } from "@/components/query-results/QueryResultsTable.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 
@@ -6,10 +12,15 @@ export interface QueryResultsProps {
   readonly query?: string;
   readonly data?: unknown;
   readonly isLoading?: boolean;
-  readonly endpointEnabled?: boolean;
+  readonly execMode?: "translate" | "query";
 }
 
-export function QueryResults({ query, data, isLoading, endpointEnabled }: QueryResultsProps) {
+export function QueryResults({
+  query,
+  data,
+  isLoading,
+  execMode,
+}: QueryResultsProps) {
   if (isLoading) {
     return (
       <div className="flex flex-col gap-2">
@@ -26,22 +37,22 @@ export function QueryResults({ query, data, isLoading, endpointEnabled }: QueryR
   if (!query && !data) return null;
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className={"max-h-full py-4"}>
+      <CardHeader className={"sticky top-0 z-5 bg-white"}>
         <CardTitle>
-          {endpointEnabled ? "LogsQL query results" : "LogsQL query"}
+          {execMode === "query" ? "LogsQL query results" : "LogsQL query"}
         </CardTitle>
-        {query &&
+        {query && (
           <CardDescription>
             <code>{query}</code>
           </CardDescription>
-        }
+        )}
       </CardHeader>
-      {!!data &&
-        <CardContent>
+      {!!data && (
+        <CardContent className={"overflow-y-auto"}>
           <QueryResultsTable data={data} />
         </CardContent>
-      }
+      )}
     </Card>
   );
 }

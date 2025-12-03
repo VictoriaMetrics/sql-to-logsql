@@ -107,6 +107,9 @@ type queryRequest struct {
 	SQL         string `json:"sql"`
 	Endpoint    string `json:"endpoint,omitempty"`
 	BearerToken string `json:"bearerToken,omitempty"`
+	Start       string `json:"start,omitempty"`
+	End         string `json:"end,omitempty"`
+	ExecMode    string `json:"execMode,omitempty"`
 }
 
 type queryResponse struct {
@@ -135,6 +138,13 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, queryResponse{Error: "sql query is required"})
 		return
 	}
+	execMode := strings.TrimSpace(strings.ToLower(req.ExecMode))
+	if execMode != "" && execMode != "translate" && execMode != "query" {
+		writeJSON(w, http.StatusBadRequest, queryResponse{Error: "invalid execMode: possible values are translate and query"})
+		return
+	}
+	start := strings.TrimSpace(req.Start)
+	end := strings.TrimSpace(req.End)
 
 	statement, err := processQuery(sqlText, s.sp)
 	if err != nil {
@@ -158,9 +168,14 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := queryResponse{LogsQL: statement.LogsQL}
-	data, err := s.api.Execute(r.Context(), statement, vlogs.EndpointConfig{
-		Endpoint:    req.Endpoint,
-		BearerToken: req.BearerToken,
+	data, err := s.api.Execute(r.Context(), statement, vlogs.RequestParams{
+		EndpointConfig: vlogs.EndpointConfig{
+			Endpoint:    req.Endpoint,
+			BearerToken: req.BearerToken,
+		},
+		Start:    start,
+		End:      end,
+		ExecMode: execMode,
 	})
 	if err != nil {
 		log.Printf("ERROR: query execution failed: %v", err)
