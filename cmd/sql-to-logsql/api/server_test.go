@@ -31,6 +31,12 @@ func TestHandleQuerySuccess(t *testing.T) {
 			if got := req.Form.Get("query"); got != "*" {
 				t.Fatalf("unexpected query sent: %q", got)
 			}
+			if got := req.Form.Get("start"); got != "1764770090000" {
+				t.Fatalf("unexpected start sent: %q", got)
+			}
+			if got := req.Form.Get("end"); got != "1764856490000" {
+				t.Fatalf("unexpected end sent: %q", got)
+			}
 			resp := &http.Response{
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(bytes.NewBufferString(`{"status":"ok"}`)),
@@ -41,7 +47,11 @@ func TestHandleQuerySuccess(t *testing.T) {
 		}),
 	})
 
-	reqBody := map[string]string{"sql": "SELECT * FROM logs"}
+	reqBody := map[string]string{
+		"sql":   "SELECT * FROM logs",
+		"start": "1764770090000",
+		"end":   "1764856490000",
+	}
 	buf, _ := json.Marshal(reqBody)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/sql-to-logsql", bytes.NewReader(buf))
 	req.Header.Set("Content-Type", "application/json")

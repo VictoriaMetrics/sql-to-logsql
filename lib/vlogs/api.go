@@ -18,6 +18,20 @@ type EndpointConfig struct {
 	BearerToken string
 }
 
+type QueryMode string
+
+const (
+	QueryModeTranslate        QueryMode = "translate"
+	QueryModeTranslateAndLoad QueryMode = "query"
+)
+
+type RequestParams struct {
+	EndpointConfig
+	Start    string
+	End      string
+	ExecMode string
+}
+
 type API struct {
 	ec     EndpointConfig
 	limit  uint32
@@ -34,29 +48,30 @@ func NewVLogsAPI(ec EndpointConfig, limit uint32) *API {
 	}
 }
 
-func (a *API) Execute(ctx context.Context, si *logsql.StatementInfo, customEC EndpointConfig) ([]byte, error) {
-	if a.ec.Endpoint != "" && customEC.Endpoint != "" {
+func (a *API) Execute(ctx context.Context, si *logsql.StatementInfo, params RequestParams) ([]byte, error) {
+	if a.ec.Endpoint != "" && params.Endpoint != "" {
 		return nil, &APIError{
 			Code:    http.StatusBadRequest,
 			Message: "endpoint can be set either in config or in request, not both",
 		}
 	}
-	recEC := customEC
-	if recEC.Endpoint == "" {
-		recEC.Endpoint = a.ec.Endpoint
-		recEC.BearerToken = a.ec.BearerToken
+	recParams := params
+	if recParams.Endpoint == "" {
+		recParams.Endpoint = a.ec.Endpoint
+		recParams.BearerToken = a.ec.BearerToken
 	}
+
 	switch si.Kind {
 	case logsql.StatementTypeSelect:
-		if a.ec.Endpoint == "" && customEC.Endpoint == "" {
+		if recParams.Endpoint == "" || recParams.ExecMode == "translate" {
 			return nil, nil
 		}
-		return a.Query(ctx, si.LogsQL, recEC)
+		return a.Query(ctx, si.LogsQL, recParams)
 	case logsql.StatementTypeDescribe:
-		if a.ec.Endpoint == "" && customEC.Endpoint == "" {
+		if recParams.Endpoint == "" || recParams.ExecMode == "translate" {
 			return nil, nil
 		}
-		return a.GetFieldNames(ctx, si.LogsQL, recEC)
+		return a.GetFieldNames(ctx, si.LogsQL, recParams)
 	case logsql.StatementTypeCreateView, logsql.StatementTypeDropView:
 		return []byte(si.Data), nil
 	case logsql.StatementTypeShowTables, logsql.StatementTypeShowViews:
@@ -73,18 +88,18 @@ func (a *API) SetHTTPClient(client *http.Client) {
 	a.client = client
 }
 
-func (a *API) Query(ctx context.Context, logsQL string, recEC EndpointConfig) ([]byte, error) {
-	if recEC.Endpoint == "" {
+func (a *API) Query(ctx context.Context, logsQL string, params RequestParams) ([]byte, error) {
+	if params.Endpoint == "" {
 		return nil, &APIError{
 			Code:    http.StatusBadRequest,
 			Message: "endpoint is required for this statement",
 		}
 	}
-	reqURL, err := url.Parse(recEC.Endpoint)
+	reqURL, err := url.Parse(params.Endpoint)
 	if err != nil {
 		return nil, &APIError{
 			Code:    http.StatusBadRequest,
-			Message: fmt.Sprintf("invalid endpoint URL: %v", recEC.Endpoint),
+			Message: fmt.Sprintf("invalid endpoint URL: %v", params.Endpoint),
 			Err:     err,
 		}
 	}
@@ -92,6 +107,12 @@ func (a *API) Query(ctx context.Context, logsQL string, recEC EndpointConfig) ([
 	form := url.Values{}
 	form.Set("query", logsQL)
 	form.Set("limit", fmt.Sprintf("%d", a.limit))
+	if params.Start != "" {
+		form.Set("start", params.Start)
+	}
+	if params.End != "" {
+		form.Set("end", params.End)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL.String(), strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, &APIError{
@@ -101,8 +122,8 @@ func (a *API) Query(ctx context.Context, logsQL string, recEC EndpointConfig) ([
 		}
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if recEC.BearerToken != "" {
-		req.Header.Set("Authorization", "Bearer "+recEC.BearerToken)
+	if params.BearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+params.BearerToken)
 	}
 
 	resp, err := a.client.Do(req)
@@ -145,24 +166,30 @@ type FieldNamesValue struct {
 	Hits  uint64 `json:"hits"`
 }
 
-func (a *API) GetFieldNames(ctx context.Context, logsQL string, recEC EndpointConfig) ([]byte, error) {
-	if recEC.Endpoint == "" {
+func (a *API) GetFieldNames(ctx context.Context, logsQL string, params RequestParams) ([]byte, error) {
+	if params.Endpoint == "" {
 		return nil, &APIError{
 			Code:    http.StatusBadRequest,
 			Message: "endpoint is required for this statement",
 		}
 	}
-	reqURL, err := url.Parse(recEC.Endpoint)
+	reqURL, err := url.Parse(params.Endpoint)
 	if err != nil {
 		return nil, &APIError{
 			Code:    http.StatusBadRequest,
-			Message: fmt.Sprintf("invalid endpoint URL: %v", recEC.Endpoint),
+			Message: fmt.Sprintf("invalid endpoint URL: %v", params.Endpoint),
 			Err:     err,
 		}
 	}
 	reqURL = reqURL.JoinPath("/select/logsql/field_names")
 	form := url.Values{}
 	form.Set("query", logsQL)
+	if params.Start != "" {
+		form.Set("start", params.Start)
+	}
+	if params.End != "" {
+		form.Set("end", params.End)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL.String(), strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, &APIError{
@@ -172,8 +199,8 @@ func (a *API) GetFieldNames(ctx context.Context, logsQL string, recEC EndpointCo
 		}
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if recEC.BearerToken != "" {
-		req.Header.Set("Authorization", "Bearer "+recEC.BearerToken)
+	if params.BearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+params.BearerToken)
 	}
 
 	resp, err := a.client.Do(req)
