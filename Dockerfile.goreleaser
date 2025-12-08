@@ -1,4 +1,4 @@
-FROM alpine:3.22
+FROM alpine:3.23
 RUN addgroup -g 1000 -S sql-to-logsql && adduser -u 1000 -S sql-to-logsql -G sql-to-logsql
 ARG TARGETPLATFORM
 COPY --chown=sql-to-logsql:sql-to-logsql $TARGETPLATFORM/sql-to-logsql /usr/local/bin/sql-to-logsql
