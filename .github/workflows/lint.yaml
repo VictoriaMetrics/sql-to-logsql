@@ -16,7 +16,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25.5"
+          go-version: "1.26"
 
       - name: Run ui build
         run: make ui-build
@@ -24,7 +24,7 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.4
+          version: v2.11
 
       - name: Run lint
         run: make lint
