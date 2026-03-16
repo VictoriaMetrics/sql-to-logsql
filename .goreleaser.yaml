@@ -13,6 +13,11 @@ builds:
       - arm64
       - arm
       - "386"
+    ignore:
+      - goos: darwin
+        goarch: '386'
+      - goos: windows
+        goarch: arm
     main: ./cmd/sql-to-logsql/main.go
     binary: sql-to-logsql
     ldflags:
